@@ -1,0 +1,9 @@
+[package]
+name = "nvmetoy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+zerocopy = { version = "0.8", features = ["derive"] }
+libc = "0.2"
+rustyline = "14"
