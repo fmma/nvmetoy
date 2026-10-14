@@ -23,7 +23,7 @@ fn flags(value: u32, bits: &[(u32, &str)]) -> String {
 
 pub fn print_controller_identification(data: &[u8]) -> io::Result<()> {
     let (id, _) = IdentifyController::read_from_prefix(data)
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "Identify Controller data too short"))?;
+        .map_err(|_| io::Error::other("Identify Controller data too short"))?;
 
     let version = id.ver;
     let version_major = version >> 16;

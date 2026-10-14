@@ -11,7 +11,7 @@ use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
 use nvmetoy::nvme_identify::print_controller_identification;
-use nvmetoy::NvmeUserspaceDriver;
+use nvmetoy::{NvmeUserspaceDriver, MAX_TRANSFER_BYTES};
 
 struct Extent {
     device_lba: u64,
@@ -156,7 +156,11 @@ fn run() -> io::Result<()> {
 
     let mut editor: Editor<ReplHelper, FileHistory> =
         Editor::new().map_err(|error| other(&format!("readline init failed: {error}")))?;
-    let mut lbas: Vec<u64> = blocks.extents.iter().map(|extent| extent.device_lba).collect();
+    let mut lbas: Vec<u64> = blocks
+        .extents
+        .iter()
+        .map(|extent| extent.device_lba)
+        .collect();
     lbas.sort_unstable();
     lbas.dedup();
     editor.set_helper(Some(ReplHelper { lbas }));
@@ -289,7 +293,15 @@ fn fill(
     if count == 0 {
         return Err(other("block count must be non-zero"));
     }
-    let data = vec![byte; blocks.device_lba_size as usize * count as usize];
+    let bytes = (count as usize)
+        .checked_mul(blocks.device_lba_size as usize)
+        .filter(|&n| n <= MAX_TRANSFER_BYTES)
+        .ok_or_else(|| {
+            other(&format!(
+                "fill of {count} blocks exceeds the {MAX_TRANSFER_BYTES}-byte transfer limit"
+            ))
+        })?;
+    let data = vec![byte; bytes];
     let written = confined_write(driver, blocks, device_lba, &data)?;
     let plural = if written == 1 { "block" } else { "blocks" };
     println!(
@@ -475,5 +487,5 @@ fn parse<T: std::str::FromStr>(text: &str) -> io::Result<T> {
 }
 
 fn other(message: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, message.to_string())
+    io::Error::other(message.to_string())
 }

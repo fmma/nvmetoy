@@ -5,13 +5,17 @@ use std::mem::size_of;
 use std::thread::sleep;
 use std::time::Duration;
 
+use zerocopy::FromBytes;
+
 use crate::dma_region::{DmaRegion, HUGE_PAGE_SIZE};
 use crate::nvme_bar::NvmeBar;
 use crate::nvme_command_builders::{
     nvme_create_io_completion_queue, nvme_create_io_submission_queue, nvme_identify, nvme_read,
     nvme_write,
 };
-use crate::nvme_spec::{CompletionQueueEntry, IdentifyStructure};
+use crate::nvme_spec::{
+    CompletionQueueEntry, IdentifyController, IdentifyNamespace, IdentifyStructure,
+};
 use crate::queue_pair::{QueuePair, QUEUE_DEPTH};
 
 const PAGE_SIZE: usize = 4096;
@@ -26,6 +30,14 @@ const IO_SUBMISSION_QUEUE_OFFSET: usize = 0x2000;
 const IO_COMPLETION_QUEUE_OFFSET: usize = 0x3000;
 const PRP_LIST_OFFSET: usize = 0x4000;
 const DATA_OFFSET: usize = 0x5000;
+
+/// The largest single read or write: the data area is the tail of the one DMA hugepage.
+pub const MAX_TRANSFER_BYTES: usize = HUGE_PAGE_SIZE - DATA_OFFSET;
+
+// How many PRP entries fit in the one-page PRP-list region. A transfer is capped at
+// MAX_TRANSFER_BYTES, which keeps the entry count below this; the debug_assert in
+// data_pointers guards the coupling if either constant changes.
+const PRP_LIST_CAPACITY: usize = (DATA_OFFSET - PRP_LIST_OFFSET) / size_of::<u64>();
 
 pub struct NvmeUserspaceDriver {
     nvme_bar: NvmeBar,
@@ -131,8 +143,10 @@ impl NvmeUserspaceDriver {
     fn check_queue_entry_sizes(&mut self) -> io::Result<()> {
         chat!("--- checking the controller accepts our 64-byte SQE / 16-byte CQE sizes ---");
         let data = self.identify(IdentifyStructure::Controller, 0)?;
-        let submission = data[512]; // SQES: low nibble required min, high nibble max (2^n)
-        let completion = data[513]; // CQES: low nibble required min, high nibble max (2^n)
+        let (controller, _) = IdentifyController::read_from_prefix(&data)
+            .map_err(|_| other("Identify Controller data too short"))?;
+        let submission = controller.sqes; // low nibble required min, high nibble max (2^n)
+        let completion = controller.cqes; // low nibble required min, high nibble max (2^n)
         let required_submission = IO_SUBMISSION_ENTRY_SIZE_EXPONENT as u8;
         let required_completion = IO_COMPLETION_ENTRY_SIZE_EXPONENT as u8;
 
@@ -207,11 +221,13 @@ impl NvmeUserspaceDriver {
             return Ok(block_size);
         }
         let data = self.identify(IdentifyStructure::Namespace, nsid)?;
-        let formatted_lba_size = (data[26] & 0xF) as usize;
-        let lba_format = 128 + formatted_lba_size * 4;
-        let lba_data_size_exponent = data[lba_format + 2];
-        let block_size = 1usize << lba_data_size_exponent;
-        chat!("namespace {nsid}: formatted LBA size index {formatted_lba_size} -> {block_size}-byte blocks");
+        let (namespace, _) = IdentifyNamespace::read_from_prefix(&data)
+            .map_err(|_| other("Identify Namespace data too short"))?;
+        let format_index = (namespace.flbas & 0xF) as usize;
+        let block_size = 1usize << namespace.lba_formats[format_index].lbads;
+        chat!(
+            "namespace {nsid}: formatted LBA size index {format_index} -> {block_size}-byte blocks"
+        );
         self.block_sizes.insert(nsid, block_size);
         Ok(block_size)
     }
@@ -219,9 +235,12 @@ impl NvmeUserspaceDriver {
     pub fn read(&mut self, slba: u64, block_count: u16) -> io::Result<Vec<u8>> {
         let nsid = self.nsid;
         chat!("=== READ nsid={nsid}, starting LBA {slba}, {block_count} block(s) ===");
+        if block_count == 0 {
+            return Err(other("read of zero blocks"));
+        }
         let block_size = self.namespace_block_size(nsid)?;
         let total = block_size * block_count as usize;
-        if total > HUGE_PAGE_SIZE - DATA_OFFSET {
+        if total > MAX_TRANSFER_BYTES {
             return Err(other("read larger than the data buffer"));
         }
 
@@ -254,7 +273,7 @@ impl NvmeUserspaceDriver {
                 "write length must be a non-zero multiple of the block size",
             ));
         }
-        if data.len() > HUGE_PAGE_SIZE - DATA_OFFSET {
+        if data.len() > MAX_TRANSFER_BYTES {
             return Err(other("write larger than the data buffer"));
         }
         let block_count = data.len() / block_size;
@@ -288,6 +307,11 @@ impl NvmeUserspaceDriver {
                 second
             }
             _ => {
+                debug_assert!(
+                    page_count - 1 <= PRP_LIST_CAPACITY,
+                    "PRP list needs {} entries but only {PRP_LIST_CAPACITY} fit",
+                    page_count - 1
+                );
                 let list = self.prp_list_physical_address();
                 chat!(
                     "  PRP: {length} bytes span {page_count} pages; PRP1={prp1:#018x}, PRP2={list:#018x} points at a {}-entry PRP list:",
@@ -297,7 +321,10 @@ impl NvmeUserspaceDriver {
                     let page = self.data_page_physical_address(index + 1);
                     self.dma_region
                         .write_volatile(PRP_LIST_OFFSET + index * size_of::<u64>(), page);
-                    chat!("    PRP list[{index}] = {page:#018x}  (data page {})", index + 1);
+                    chat!(
+                        "    PRP list[{index}] = {page:#018x}  (data page {})",
+                        index + 1
+                    );
                 }
                 list
             }
@@ -384,5 +411,5 @@ pub fn enable_bus_master(bdf: &str) -> io::Result<()> {
 }
 
 fn other(message: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, message.to_string())
+    io::Error::other(message.to_string())
 }

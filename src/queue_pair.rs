@@ -99,22 +99,16 @@ impl QueuePair {
                 bar.ring_completion_doorbell(self.id, doorbell_stride, self.completion_head);
 
                 if completion.cid != cid {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!(
-                            "completion for command {} but expected {cid}",
-                            completion.cid
-                        ),
-                    ));
+                    return Err(io::Error::other(format!(
+                        "completion for command {} but expected {cid}",
+                        completion.cid
+                    )));
                 }
                 return Ok(completion);
             }
             spins += 1;
             if spins > 200_000 {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "timed out polling completion queue",
-                ));
+                return Err(io::Error::other("timed out polling completion queue"));
             }
         }
     }

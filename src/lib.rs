@@ -21,4 +21,4 @@ pub mod nvmetoy;
 pub mod queue_pair;
 
 pub use nvme_spec::{CompletionQueueEntry, SubmissionQueueEntry};
-pub use nvmetoy::NvmeUserspaceDriver;
+pub use nvmetoy::{NvmeUserspaceDriver, MAX_TRANSFER_BYTES};
