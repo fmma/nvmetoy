@@ -35,6 +35,21 @@ cargo build --release --bin nvmetoy_repl
 sudo ./target/release/nvmetoy_repl <bdf> <map-file> [nsid]
 ```
 
+## Building
+
+`flake.nix` gives a dev shell with the Rust toolchain and libxnvme, built from
+the pinned xNVMe v0.7.5 source since nixpkgs has no xnvme package:
+
+```
+nix develop
+cargo build --release                    # the from-scratch driver only
+cargo build --release --features xnvme   # also the xnvmetoy binary
+```
+
+`nix build` builds both binaries with the `xnvme` feature on. Without Nix,
+the `xnvme` feature needs libxnvme and its headers findable by pkg-config, and
+libclang for bindgen.
+
 ## REPL commands
 
 LBAs are absolute device blocks, text is ASCII, counts are decimal. Tab completes commands
