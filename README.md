@@ -50,6 +50,13 @@ cargo build --release --features xnvme   # also the xnvmetoy binary
 the `xnvme` feature needs libxnvme and its headers findable by pkg-config, and
 libclang for bindgen.
 
+## xNVMe variant
+
+`xnvmetoy` is the same exercise with xNVMe owning the queues: the 64-byte
+commands are still built by hand, then handed to `xnvme_cmd_pass()` through the
+`xnvme-sys` crate. It is behind the `xnvme` Cargo feature so the from-scratch
+driver builds without libxnvme. Currently a stub that prints the library version.
+
 ## REPL commands
 
 LBAs are absolute device blocks, text is ASCII, counts are decimal. Tab completes commands
@@ -79,3 +86,4 @@ A single `read` or `write` is bounded by the one 2 MiB hugepage DMA buffer (abou
 - `src/nvme_command_builders.rs`, `src/nvme_identify.rs`: command construction and Identify parsing.
 - `src/nvmetoy.rs`: the driver that wires it together (`NvmeUserspaceDriver`).
 - `src/bin/nvmetoy_repl.rs`: the file-confined REPL.
+- `src/bin/xnvmetoy.rs`: the xNVMe variant (feature `xnvme`).

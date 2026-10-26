@@ -7,3 +7,11 @@ edition = "2021"
 zerocopy = { version = "0.8", features = ["derive"] }
 libc = "0.2"
 rustyline = "14"
+xnvme-sys = { version = "0.7.5", optional = true }
+
+[features]
+xnvme = ["dep:xnvme-sys"]
+
+[[bin]]
+name = "xnvmetoy"
+required-features = ["xnvme"]
